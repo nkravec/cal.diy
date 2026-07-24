@@ -38,6 +38,7 @@ jobs:
 
       - uses: skyramp/testbot@787ec1458c9fabc57081614ae8301ba10fc74d4c # v0.11.1
         with:
+          skyrampMcpVersion: '0.3.2-rc.pom-3'
           skyrampLicenseFile: ${{ secrets.SKYRAMP_LICENSE_FILE }}
           anthropicApiKey: ${{ secrets.SKYRAMP_TESTBOT_API_KEY }}
           githubToken: ${{ steps.skyramp-testbot-app-token.outputs.token }}
