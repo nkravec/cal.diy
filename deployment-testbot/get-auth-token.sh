@@ -75,10 +75,40 @@ if [[ "$VERIFY" != "$EVAL_EMAIL" ]]; then
 fi
 echo "  [get-auth-token] Verified: key resolves to ${VERIFY}" >&2
 
-# ── 7. Install dotenv for the Playwright executor ────────────────────────────
+# ── 7. Seed bookable data: schedule + availability + one event type ──────────
+# A booking-flow UI test needs the public booking page (/eval-skyramp/quick-chat)
+# to show slots: the eval user must have a default schedule with availability and
+# at least one event type. All-day/all-week availability avoids timezone- and
+# weekday-dependent "no slots" flakiness. Idempotent (NOT EXISTS guards).
+docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -q -c \
+  "INSERT INTO \"Schedule\" (\"userId\", name, \"timeZone\")
+   SELECT id, 'Skyramp Eval Hours', '${EVAL_TIMEZONE}' FROM users u WHERE u.email = '${EVAL_EMAIL}'
+   AND NOT EXISTS (SELECT 1 FROM \"Schedule\" s WHERE s.\"userId\" = u.id AND s.name = 'Skyramp Eval Hours');"
+docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -q -c \
+  "INSERT INTO \"Availability\" (\"scheduleId\", days, \"startTime\", \"endTime\")
+   SELECT s.id, ARRAY[0,1,2,3,4,5,6], '00:00:00'::time, '23:45:00'::time
+   FROM \"Schedule\" s JOIN users u ON s.\"userId\" = u.id
+   WHERE u.email = '${EVAL_EMAIL}' AND s.name = 'Skyramp Eval Hours'
+   AND NOT EXISTS (SELECT 1 FROM \"Availability\" a WHERE a.\"scheduleId\" = s.id);"
+docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -q -c \
+  "UPDATE users SET \"defaultScheduleId\" = (SELECT s.id FROM \"Schedule\" s WHERE s.\"userId\" = users.id AND s.name = 'Skyramp Eval Hours')
+   WHERE email = '${EVAL_EMAIL}' AND \"defaultScheduleId\" IS NULL;"
+docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -q -c \
+  "INSERT INTO \"EventType\" (title, slug, length, \"userId\", \"scheduleId\")
+   SELECT 'Quick Chat', 'quick-chat', 30, u.id, u.\"defaultScheduleId\"
+   FROM users u WHERE u.email = '${EVAL_EMAIL}'
+   AND NOT EXISTS (SELECT 1 FROM \"EventType\" e WHERE e.\"userId\" = u.id AND e.slug = 'quick-chat');"
+docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -q -c \
+  "INSERT INTO \"_user_eventtype\" (\"A\", \"B\")
+   SELECT e.id, u.id FROM \"EventType\" e JOIN users u ON e.\"userId\" = u.id
+   WHERE u.email = '${EVAL_EMAIL}' AND e.slug = 'quick-chat'
+   ON CONFLICT DO NOTHING;"
+echo "  [get-auth-token] Bookable data seeded (schedule, availability, event type quick-chat)" >&2
+
+# ── 8. Install dotenv for the Playwright executor ────────────────────────────
 # cal.diy's playwright.config.ts imports dotenv. The Skyramp executor runs
 # playwright from the CI runner's home dir where dotenv may not be installed.
 npm install --prefix "$HOME" dotenv --silent 2>/dev/null || true
 
-# ── 8. Output the bearer token ───────────────────────────────────────────────
+# ── 9. Output the bearer token ───────────────────────────────────────────────
 echo "${API_KEY_PREFIX}${RAW_API_KEY}"
