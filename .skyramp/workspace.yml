@@ -1,0 +1,36 @@
+# Skyramp Workspace Configuration for cal.diy eval.
+# Committed to the fork for CI testbot runs (ported from the eval-framework 08-caldiy scenario).
+# Auth model: API key as bearer token (cal_<key>).
+# User and API key are seeded by get-auth-token.sh before the agent runs.
+workspace:
+  repoName: nkravec/cal.diy
+  repoUrl: https://github.com/nkravec/cal.diy.git
+metadata:
+  schemaVersion: v1
+  mcpVersion: 1.0.0
+  executorVersion: v1.0.0
+  createdAt: "2026-01-01T00:00:00Z"
+  updatedAt: "2026-01-01T00:00:00Z"
+services:
+  - serviceName: api-v2
+    language: typescript
+    framework: playwright
+    testDirectory: apps/api/v2/src/platform/me
+    api:
+      authType: bearer
+      authHeader: Authorization
+      baseUrl: http://localhost:5555
+    runtimeDetails:
+      serverStartCommand: docker compose up -d calcom-api
+      runtime: docker
+      dockerNetwork: stack
+  - serviceName: web
+    language: typescript
+    framework: playwright
+    testDirectory: apps/web/tests
+    api:
+      baseUrl: http://localhost:3000
+    runtimeDetails:
+      serverStartCommand: docker compose up -d calcom
+      runtime: docker
+      dockerNetwork: stack
