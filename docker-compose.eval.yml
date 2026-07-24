@@ -1,0 +1,176 @@
+services:
+  # ── Build step: yarn install + build api-v2 + build web ──────────────────
+  # Run as one-shot builder before starting runtime services.
+  # node_modules and build artifacts are written into the calcom-build volume.
+  # yarn-cache volume persists downloaded packages across CI runs on same host.
+  calcom-builder:
+    image: node:20
+    working_dir: /calcom
+    volumes:
+      - .:/calcom
+      - calcom-build:/calcom-build
+      - yarn-cache:/yarn-cache
+      - /tmp/eval-logs:/eval-logs
+    environment:
+      NODE_OPTIONS: "--max-old-space-size=8192"
+      YARN_CACHE_FOLDER: /yarn-cache
+      NEXTAUTH_SECRET: RbyBOfiZFt/IsBL2E2Zy2idcKRH+WclnHEiu1FmRdf0=
+      NEXTAUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_WEBAPP_URL: http://localhost:3000
+      NEXT_PUBLIC_API_V2_URL: http://localhost:5555/api/v2
+      DATABASE_URL: postgresql://unicorn_user:magical_password@database/calendso
+      DATABASE_DIRECT_URL: postgresql://unicorn_user:magical_password@database/calendso
+      CALENDSO_ENCRYPTION_KEY: Lmqy57DlHKPvwwrtkwjL/8QtxJWxC/OV
+      EMAIL_FROM: eval@skyramp.dev
+      CALCOM_TELEMETRY_DISABLED: "1"
+      NEXT_TELEMETRY_DISABLED: "1"
+      BUILT_NEXT_PUBLIC_WEBAPP_URL: http://localhost:3000
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        set -eo pipefail
+        apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 make g++ rsync > /dev/null
+        Y="node /calcom/.yarn/releases/yarn-4.12.0.cjs"
+        echo '=== yarn install ===' | tee /eval-logs/build.log
+        eval "$$Y install" 2>&1 | tee -a /eval-logs/build.log || { echo '=== YARN INSTALL FAILED ==='; tail -40 /eval-logs/build.log; exit 1; }
+        echo '=== prisma generate ===' | tee -a /eval-logs/build.log
+        eval "$$Y workspace @calcom/api-v2 run generate-schemas" 2>&1 | tee -a /eval-logs/build.log || { echo '=== PRISMA GENERATE FAILED ==='; tail -40 /eval-logs/build.log; exit 1; }
+        echo '=== api-v2 build:docker ===' | tee -a /eval-logs/build.log
+        eval "$$Y workspace @calcom/api-v2 run build:docker" 2>&1 | tee -a /eval-logs/build.log || { echo '=== API BUILD:DOCKER FAILED ==='; tail -40 /eval-logs/build.log; exit 1; }
+        echo '=== api-v2 nest build ===' | tee -a /eval-logs/build.log
+        eval "$$Y workspace @calcom/api-v2 run build" 2>&1 | tee -a /eval-logs/build.log || { echo '=== API NEST BUILD FAILED ==='; tail -40 /eval-logs/build.log; exit 1; }
+        echo '=== web build ===' | tee -a /eval-logs/build.log
+        eval "$$Y workspace @calcom/web run build" 2>&1 | tee -a /eval-logs/build.log || { echo '=== WEB BUILD FAILED ==='; tail -40 /eval-logs/build.log; exit 1; }
+        echo '=== copying build artifacts to volume ===' | tee -a /eval-logs/build.log
+        rsync -a --delete --exclude='.git' /calcom/ /calcom-build/
+        echo '=== build complete ==='
+
+  # ── Postgres ──────────────────────────────────────────────────────────────
+  database:
+    image: postgres:15
+    container_name: database
+    environment:
+      POSTGRES_USER: unicorn_user
+      POSTGRES_PASSWORD: magical_password
+      POSTGRES_DB: calendso
+    volumes:
+      - database-data:/var/lib/postgresql/data
+    networks:
+      - stack
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U unicorn_user -d calendso"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Redis ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:latest
+    container_name: redis
+    volumes:
+      - redis-data:/data
+    networks:
+      - stack
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── NestJS v2 API (port 5555) ─────────────────────────────────────────────
+  calcom-api:
+    image: node:20
+    container_name: calcom-api
+    working_dir: /calcom
+    volumes:
+      - calcom-build:/calcom
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=4096"
+      API_PORT: "5555"
+      API_URL: http://localhost
+      DATABASE_URL: postgresql://unicorn_user:magical_password@database/calendso
+      DATABASE_READ_URL: postgresql://unicorn_user:magical_password@database/calendso
+      DATABASE_WRITE_URL: postgresql://unicorn_user:magical_password@database/calendso
+      DATABASE_DIRECT_URL: postgresql://unicorn_user:magical_password@database/calendso
+      REDIS_URL: redis://redis:6379
+      NEXTAUTH_SECRET: RbyBOfiZFt/IsBL2E2Zy2idcKRH+WclnHEiu1FmRdf0=
+      JWT_SECRET: asjdijI1JIO12I3O89198jojioSAJDU
+      CALENDSO_ENCRYPTION_KEY: Lmqy57DlHKPvwwrtkwjL/8QtxJWxC/OV
+      CALCOM_SERVICE_ACCOUNT_ENCRYPTION_KEY: LDBFYLEVICRZBYQZUZCSTZRJFZUKZMEI
+      STRIPE_API_KEY: sk_test_eval000000000000000000000
+      STRIPE_WEBHOOK_SECRET: whsec_eval0000000000000000000000
+      API_KEY_PREFIX: cal_
+      WEB_APP_URL: http://localhost:3000/
+      IS_E2E: "false"
+      REWRITE_API_V2_PREFIX: "true"
+      LOG_LEVEL: warn
+      CALCOM_TELEMETRY_DISABLED: "1"
+    entrypoint: ["bash", "-c"]
+    command: ["rm -f .env packages/prisma/.env apps/api/v2/.env && node apps/api/v2/dist/apps/api/v2/src/main.js"]
+    ports:
+      - "5555:5555"
+    networks:
+      - stack
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:5555/v2/me', r => process.exit(r.statusCode === 401 ? 0 : 1)).on('error', () => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # ── Next.js web app (port 3000) ───────────────────────────────────────────
+  calcom:
+    image: node:20
+    container_name: calcom
+    working_dir: /calcom
+    volumes:
+      - calcom-build:/calcom
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=4096"
+      DATABASE_URL: postgresql://unicorn_user:magical_password@database/calendso
+      DATABASE_DIRECT_URL: postgresql://unicorn_user:magical_password@database/calendso
+      DATABASE_HOST: database
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: RbyBOfiZFt/IsBL2E2Zy2idcKRH+WclnHEiu1FmRdf0=
+      CALENDSO_ENCRYPTION_KEY: Lmqy57DlHKPvwwrtkwjL/8QtxJWxC/OV
+      NEXT_PUBLIC_WEBAPP_URL: http://localhost:3000
+      NEXT_PUBLIC_API_V2_URL: http://localhost:5555/api/v2
+      CALCOM_TELEMETRY_DISABLED: "1"
+      BUILT_NEXT_PUBLIC_WEBAPP_URL: http://localhost:3000
+      STRIPE_API_KEY: sk_test_eval000000000000000000000
+      STRIPE_WEBHOOK_SECRET: whsec_eval0000000000000000000000
+      IS_TEAM_BILLING_ENABLED: "false"
+      CRON_API_KEY: "0cc0e6c35519bba620c9360cfe3e68d0"
+    command: ["bash", "-c", "rm -f .env packages/prisma/.env && bash scripts/start.sh"]
+    ports:
+      - "3000:3000"
+    networks:
+      - stack
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3000 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 60s
+
+networks:
+  stack:
+    name: stack
+
+volumes:
+  calcom-build:
+  yarn-cache:
+  database-data:
+  redis-data:

@@ -1,0 +1,69 @@
+name: Skyramp Testbot
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.actor != 'skyramp-testbot[bot]' }}
+
+jobs:
+  testbot:
+    # Run on human PR events, or @skyramp-testbot comments on a PR. The
+    # `github.actor != skyramp-testbot[bot]` guard skips bot-triggered events
+    # (bot-opened side-PRs, synchronize from the bot's own commits) BEFORE the
+    # expensive yarn/Next.js build — avoids ~30-min self-retriggers.
+    if: >-
+      (github.event_name == 'pull_request' && github.actor != 'skyramp-testbot[bot]') ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '@skyramp-testbot') && github.event.comment.user.login != 'skyramp-testbot[bot]')
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: write
+
+    steps:
+      - name: Generate GitHub App Token
+        id: skyramp-testbot-app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ secrets.SKYRAMP_TESTBOT_APP_ID }}
+          private-key: ${{ secrets.SKYRAMP_TESTBOT_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          token: ${{ steps.skyramp-testbot-app-token.outputs.token }}
+          persist-credentials: false
+
+      # ---- SUT build (docker-compose recipe ported from the eval-framework 08-caldiy scenario) ----
+      # cal.com's yarn install + api-v2 + web builds are disk- and memory-hungry; reclaim
+      # runner disk first, then run the one-shot builder (artifacts land in the calcom-build
+      # volume that the runtime services mount).
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc "/usr/local/share/boost" "$AGENT_TOOLSDIRECTORY" || true
+
+      - name: Build SUT (yarn install + api-v2 + web)
+        run: docker compose -f docker-compose.eval.yml run --rm calcom-builder
+
+      # ---- Run TestBot against the compose-booted SUT ----
+      # setup.sh starts database/redis/api/web; readiness = API 401 probe (auth-gated /v2/me
+      # answering is proof the server is up) + web 200 on :3000. get-auth-token.sh seeds the
+      # eval user + API key and prints the bearer token.
+      - uses: skyramp/testbot@787ec1458c9fabc57081614ae8301ba10fc74d4c # v0.11.1
+        with:
+          skyrampMcpVersion: '0.3.2-rc.pom-3'
+          skyrampLicenseFile: ${{ secrets.SKYRAMP_LICENSE_FILE }}
+          anthropicApiKey: ${{ secrets.SKYRAMP_TESTBOT_API_KEY }}
+          githubToken: ${{ steps.skyramp-testbot-app-token.outputs.token }}
+          githubAppId: ${{ secrets.SKYRAMP_TESTBOT_APP_ID }}
+          githubAppPrivateKey: ${{ secrets.SKYRAMP_TESTBOT_APP_PRIVATE_KEY }}
+          targetSetupCommand: './deployment-testbot/setup.sh'
+          targetReadyCheckCommand: "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:5555/v2/me | grep -q '^401$' && curl -sf http://localhost:3000 > /dev/null"
+          targetReadyCheckTimeout: '900'
+          authTokenCommand: './deployment-testbot/get-auth-token.sh'
+          uiCredentials: 'eval@skyramp.dev:Eval1234!'
