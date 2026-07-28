@@ -245,6 +245,7 @@ export const BookEventForm = ({
               isVerificationCodeSending
             }
             className={classNames?.confirmButton}
+            title="Confirm and book this time slot"
             data-testid={rescheduleUid && bookingData ? "confirm-reschedule-button" : "confirm-book-button"}>
             {rescheduleUid && bookingData
               ? t("reschedule")
