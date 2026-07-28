@@ -54,9 +54,9 @@ jobs:
       # setup.sh starts database/redis/api/web; readiness = API 401 probe (auth-gated /v2/me
       # answering is proof the server is up) + web 200 on :3000. get-auth-token.sh seeds the
       # eval user + API key and prints the bearer token.
-      - uses: skyramp/testbot@787ec1458c9fabc57081614ae8301ba10fc74d4c # v0.11.1
+      - uses: skyramp/testbot@0fa71719e66159ba7a3186cdcc5bcc671a2e0b03 # v0.11.2
         with:
-          skyrampMcpVersion: '0.3.2-rc.pom-3'
+          skyrampMcpVersion: '0.3.2-rc.pom-4'
           skyrampLicenseFile: ${{ secrets.SKYRAMP_LICENSE_FILE }}
           anthropicApiKey: ${{ secrets.SKYRAMP_TESTBOT_API_KEY }}
           githubToken: ${{ steps.skyramp-testbot-app-token.outputs.token }}

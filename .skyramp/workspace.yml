@@ -7,7 +7,7 @@ workspace:
   repoUrl: https://github.com/nkravec/cal.diy.git
 metadata:
   schemaVersion: v1
-  mcpVersion: 0.3.2-rc.pom-3
+  mcpVersion: 0.3.2-rc.pom-4
   executorVersion: v1.3.34
   createdAt: "2026-01-01T00:00:00Z"
   updatedAt: "2026-01-01T00:00:00Z"
