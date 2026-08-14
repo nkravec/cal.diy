@@ -932,6 +932,7 @@ const CTA = ({ profileOptions }: { profileOptions: ProfileOption[] }) => {
       />
       <Button
         data-testid="new-event-type"
+        title="Create a new event type"
         href={`?dialog=new&eventPage=${profileOptions[0]?.slug ?? ""}`}>
         {t("new")}
       </Button>
